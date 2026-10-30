@@ -28,6 +28,8 @@ class FloatingPetService : Service() {
     companion object {
         const val ACTION_START = "com.example.catcompanion.START"
         const val ACTION_REFRESH = "com.example.catcompanion.REFRESH"
+        const val ACTION_PLAY = "com.example.catcompanion.PLAY"
+        const val EXTRA_BEHAVIOR = "behavior"
         const val ACTION_STOP = "com.example.catcompanion.STOP"
         private const val CHANNEL = "cat_companion_running"
         private const val NOTIFICATION_ID = 1101
@@ -77,10 +79,19 @@ class FloatingPetService : Service() {
             nextActionAt = SystemClock.uptimeMillis() + 4000L
             handler.post(animationLoop)
         } else {
-            resizePet()
-            catView?.loadPhoto()
-            updateVisibility(force = true)
-            getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
+            if (intent?.action == ACTION_PLAY) {
+                val behavior = runCatching {
+                    PetView.Action.valueOf(intent.getStringExtra(EXTRA_BEHAVIOR) ?: "IDLE")
+                }.getOrDefault(PetView.Action.IDLE)
+                catView?.setBehavior(behavior)
+                catView?.isWalking = behavior == PetView.Action.WALK
+                nextActionAt = SystemClock.uptimeMillis() + 5000L
+            } else {
+                resizePet()
+                catView?.loadPhoto()
+                updateVisibility(force = true)
+                getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
+            }
         }
         return START_NOT_STICKY
     }
@@ -225,11 +236,13 @@ class FloatingPetService : Service() {
             if (shown && pet != null && layout != null) {
                 val now = SystemClock.uptimeMillis()
                 if (now >= nextActionAt && !pet.isExcited()) {
-                    val behavior = when (Random.nextInt(10)) {
+                    val behavior = when (Random.nextInt(12)) {
                         0, 1 -> PetView.Action.SIT
                         2 -> PetView.Action.SLEEP
                         3 -> PetView.Action.STRETCH
                         4 -> PetView.Action.WAVE
+                        5 -> PetView.Action.JUMP
+                        6 -> PetView.Action.IDLE
                         else -> PetView.Action.WALK
                     }
                     pet.setBehavior(behavior)
