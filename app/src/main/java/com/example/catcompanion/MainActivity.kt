@@ -209,7 +209,7 @@ val scroll = ScrollView(this).apply {
             autoButton?.text = autoLabel()
             refreshPet()
         }
-        body.addFull(autoButton)
+        body.addFull(requireNotNull(autoButton))
         body.addSpace(8)
         body.addFull(button("小猫恢复默认位置", filled = false) {
             PetSettings.clearPosition(this)
