@@ -116,6 +116,7 @@ internal object MotionFrames {
             val raw = File(staging, "raw")
             check(raw.mkdirs() || raw.isDirectory)
             val sizes = ArrayList<Pair<Int, Int>>(total)
+            val bottoms = ArrayList<Int>(total)
             // First pass: segment each real source pose. Lower-fps source may yield duplicates.
             for (i in 0 until total) {
                 val whenUs = i.toLong() * 1_000_000L / FPS
@@ -140,6 +141,7 @@ internal object MotionFrames {
                     image.recycle()
                 }
                 val cut = try {
+                    bottoms.add(subjectBottom(foreground))
                     CatPhotoProcessor.cropToContent(foreground)
                 } finally { foreground.recycle() }
                 try {
@@ -157,7 +159,8 @@ internal object MotionFrames {
             val refW = orderedWidths[percentileIndex].toFloat().coerceAtLeast(1f)
             val refH = orderedHeights[percentileIndex].toFloat().coerceAtLeast(1f)
             val commonScale = min(222f / refW, 216f / refH)
-            var lastBottomOffset = 0f
+            val medianBottom = bottoms.sorted()[bottoms.size / 2]
+            var smoothedMovement = 0f
             for (i in 0 until total) {
                 val original = BitmapFactory.decodeFile(
                     File(raw, "raw_" + i.toString().padStart(3, '0') + ".png").path
@@ -165,10 +168,12 @@ internal object MotionFrames {
                 val output = try {
                     val h = original.height * commonScale
                     val w = original.width * commonScale
-                    // Small changes in the segmented silhouette are smoothed.
-                    // Large jumps remain visible as changes in body posture.
+                    // Preserve vertical motion from the source, smooth small mask jitter.
+                    val movement = (medianBottom - bottoms[i]) * commonScale
+                    smoothedMovement = if (i == 0) movement else
+                        .60f * movement + .40f * smoothedMovement
                     val center = 128f
-                    val bottom = 234f
+                    val bottom = 234f + smoothedMovement.coerceIn(-70f, 70f)
                     val normalized = Bitmap.createBitmap(CANVAS, CANVAS, Bitmap.Config.ARGB_8888)
                     Canvas(normalized).drawBitmap(
                         original, null,
@@ -205,6 +210,21 @@ internal object MotionFrames {
             segmenter.close()
             if (staging.exists()) staging.deleteRecursively()
         }
+    }
+
+    private fun subjectBottom(bitmap: Bitmap): Int {
+        val w = bitmap.width
+        val h = bitmap.height
+        val pixels = IntArray(w * h)
+        bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
+        for (y in h - 1 downTo 0) {
+            var found = 0
+            for (x in 0 until w step 2) {
+                if ((pixels[y * w + x] ushr 24) > 50) found++
+            }
+            if (found >= 2) return y
+        }
+        return h - 1
     }
 
     /** Mild edge feather for translucent fur and whiskers; no semantic mask repair. */
