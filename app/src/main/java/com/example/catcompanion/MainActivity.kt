@@ -35,6 +35,7 @@ class MainActivity : Activity() {
     private val coral = Color.rgb(238, 135, 95)
     private var pendingStart = false
     private var importWithAi = true
+    private var importPlainBackground = false
     private var photoBusy = false
     private lateinit var photoStatus: TextView
     private lateinit var permissionSummary: TextView
@@ -120,11 +121,19 @@ val scroll = ScrollView(this).apply {
         previewPanel.addView(label("你的小猫", 14f, true))
         body.addFull(previewPanel)
         body.addSpace(12)
-        body.addFull(button("AI 识别并抠出猫咪（推荐）") { importWithAi = true; pickPhoto() })
+        body.addFull(button("AI 识别并抠出猫咪") {
+            importWithAi = true; importPlainBackground = false; pickPhoto()
+        })
         body.addSpace(8)
-        body.addFull(button("直接导入原图", filled = false) { importWithAi = false; pickPhoto() })
+        body.addFull(button("离线纯色背景去除（不用 Google）", filled = false) {
+            importWithAi = false; importPlainBackground = true; pickPhoto()
+        })
+        body.addSpace(8)
+        body.addFull(button("直接导入原图", filled = false) {
+            importWithAi = false; importPlainBackground = false; pickPhoto()
+        })
         body.addSpace(7)
-        photoStatus = label("AI 分割需 Google Play 服务；首次识别可能下载模型。", 12f)
+        photoStatus = label("AI 抠图需要 Google Play 服务。本版会先检查并下载模型；没有 Google 服务可尝试离线纯色背景去除。", 12f)
         body.addFull(photoStatus)
         body.addSpace(8)
         body.addFull(button("恢复内置手绘小猫", filled = false) {
@@ -252,7 +261,7 @@ val scroll = ScrollView(this).apply {
             body.addSpace(5)
         }
         body.addSpace(8)
-        body.addFull(label("V0.3：AI 主体识别、透明裁边、活动频率和安静模式。六种动作仍为二维模拟，并非 AI 生成真实四肢动画。", 13f))
+        body.addFull(label("V0.3.1：修复 AI 模型初始化，新增离线纯色背景去除。六种动作仍为二维模拟，并非 AI 真实多姿态。", 13f))
         body.addSpace(8)
         body.addFull(label("隐私：照片仅保存在手机 APP 的私有目录。模型首次可能通过 Google Play 服务下载；照片保存在手机本地。", 12f))
         refreshPhotoPreview()
@@ -353,7 +362,11 @@ val scroll = ScrollView(this).apply {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != REQUEST_IMAGE || resultCode != RESULT_OK) return
         val uri = data?.data ?: return
-        if (importWithAi) importAiPhoto(uri) else importOriginalPhoto(uri)
+        when {
+            importWithAi -> importAiPhoto(uri)
+            importPlainBackground -> importOfflinePhoto(uri)
+            else -> importOriginalPhoto(uri)
+        }
     }
 
     private fun importOriginalPhoto(uri: Uri) {
@@ -369,6 +382,63 @@ val scroll = ScrollView(this).apply {
     }
 
     private fun importAiPhoto(uri: Uri) {
+        photoBusy = true
+        AiModelManager.ensureAvailable(this,
+            progress = { message ->
+                if (!isFinishing && !isDestroyed) photoStatus.text = message
+            },
+            done = { result ->
+                if (isFinishing || isDestroyed) {
+                    photoBusy = false
+                    return@ensureAvailable
+                }
+                if (result.isSuccess) {
+                    processAiPhotoAfterModelReady(uri)
+                } else {
+                    photoBusy = false
+                    photoStatus.text = "AI 模型不可用：" +
+                        (result.exceptionOrNull()?.localizedMessage ?: "未知错误") +
+                        "；可以选择离线纯色背景去除。"
+                }
+            })
+    }
+
+    private fun importOfflinePhoto(uri: Uri) {
+        photoBusy = true
+        photoStatus.text = "正在离线处理纯色背景…"
+        Thread {
+            try {
+                val photo = CatPhotoProcessor.load(this, uri)
+                val cut = try {
+                    PlainBackgroundMatte.cut(photo)
+                } finally {
+                    photo.recycle()
+                }
+                try {
+                    CatPhotoProcessor.save(this, cut)
+                } finally {
+                    cut.recycle()
+                }
+                runOnUiThread {
+                    photoBusy = false
+                    if (!isFinishing && !isDestroyed) {
+                        PetSettings.setAiCutout(this, false)
+                        refreshPhotoPreview()
+                        refreshPet()
+                        photoStatus.text = "离线纯色背景去除完成（不是 AI 分割），请检查是否误删猫咪毛发。"
+                    }
+                }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    photoBusy = false
+                    if (!isFinishing && !isDestroyed)
+                        photoStatus.text = "离线处理失败：" + (error.localizedMessage ?: "背景较复杂，请尝试更简单的背景")
+                }
+            }
+        }.start()
+    }
+
+    private fun processAiPhotoAfterModelReady(uri: Uri) {
         photoBusy = true
         photoStatus.text = "正在准备照片…"
         Thread {
