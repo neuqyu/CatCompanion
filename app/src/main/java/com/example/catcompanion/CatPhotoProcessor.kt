@@ -95,7 +95,7 @@ internal object CatPhotoProcessor {
      * Remove transparent margins returned by ML Kit, preserve 4% padding so
      * paws and ears do not touch the floating window boundary.
      */
-    private fun cropToContent(source: Bitmap): Bitmap {
+    fun cropToContent(source: Bitmap): Bitmap {
         val w = source.width
         val h = source.height
         require(w > 0 && h > 0)
