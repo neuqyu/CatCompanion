@@ -290,7 +290,7 @@ class FloatingPetService : Service() {
                 }
                 if ((auto || manualActionActive) && pet.isWalking && !pet.isExcited()) {
                     stepIndex++
-                    if (stepIndex % (10 - level * 2) == 0) {
+                    if (stepIndex % max(1, 10 - level * 2) == 0) {
                         val available = max(0, viewport().first - layout.width)
                         layout.x = (layout.x + direction * dp(1)).coerceIn(0, available)
                         if (layout.x >= available || layout.x <= 0) direction *= -1
@@ -302,6 +302,7 @@ class FloatingPetService : Service() {
             }
             handler.postDelayed(this,
                 if (!shown) 500L
+                else if (pet?.hasRealMotion() == true) 16L
                 else if (PetSettings.autoMotion(this@FloatingPetService)) 55L
                 else 150L)
         }
