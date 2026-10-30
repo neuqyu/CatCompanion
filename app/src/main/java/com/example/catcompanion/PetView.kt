@@ -15,7 +15,7 @@ import kotlin.math.sin
 
 /** Offline procedural animation. Imported photos float/bob; AI-generated limb motion is not implemented. */
 internal class PetView(context: Context) : View(context) {
-    enum class Action { WALK, SIT, SLEEP, STRETCH, WAVE }
+    enum class Action { WALK, SIT, SLEEP, STRETCH, WAVE, JUMP, IDLE }
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private var current = Action.WALK
@@ -68,25 +68,53 @@ internal class PetView(context: Context) : View(context) {
         paint.color = Color.argb(45, 69, 45, 43)
         paint.style = Paint.Style.FILL
         canvas.drawOval(RectF(38f, 185f, 188f, 201f), paint)
-        val bob = if (current == Action.WALK && isWalking) sin(phase.toDouble()).toFloat() * 3.8f else sin(t.toDouble()).toFloat() * 1.2f
+        val bob = when (current) {
+            Action.WALK -> if (isWalking) sin(phase.toDouble()).toFloat() * 3.8f else 0f
+            Action.JUMP -> -kotlin.math.abs(sin(phase.toDouble() * 0.65)).toFloat() * 26f
+            else -> sin(t.toDouble()).toFloat() * 1.2f
+        }
         canvas.translate(0f, bob)
         if (!facingRight) canvas.scale(-1f, 1f, 110f, 0f)
-        if (imported == null) drawIllustratedCat(canvas, phase, t) else drawImportedPhoto(canvas, imported!!, t)
+        if (imported == null) drawIllustratedCat(canvas, phase, t) else drawImportedPhoto(canvas, imported!!, t, phase)
         canvas.restore()
     }
 
-    private fun drawImportedPhoto(canvas: Canvas, bitmap: Bitmap, t: Float) {
+    /** Shape transforms only; not synthesized limb motion. */
+    private fun drawImportedPhoto(canvas: Canvas, bitmap: Bitmap, t: Float, phase: Float) {
         val ratio = bitmap.width.toFloat() / bitmap.height.coerceAtLeast(1)
-        val targetWidth = if (ratio > 1f) 155f else (165f * ratio).coerceAtMost(155f)
-        val targetHeight = if (ratio > 1f) (155f / ratio) else 165f
-        val rect = RectF(110 - targetWidth / 2, 183 - targetHeight, 110 + targetWidth / 2, 183f)
+        val width = if (ratio > 1f) 168f else (171f * ratio).coerceAtMost(168f)
+        val height = if (ratio > 1f) 168f / ratio else 171f
+        val bottom = 184f
+        val rect = RectF(110f - width / 2, bottom - height, 110f + width / 2, bottom)
+        val pulse = sin((t * 2.3).toDouble()).toFloat()
         canvas.save()
-        canvas.rotate(sin(t.toDouble() * 1.65).toFloat() * 1.7f, 110f, 183f)
-        // A transparent PNG keeps its transparency. A JPEG is shown in a rounded tile.
-        canvas.clipPath(Path().apply { addRoundRect(rect, 16f, 16f, Path.Direction.CW) })
+        when (current) {
+            Action.WALK -> {
+                canvas.rotate(pulse * 3.2f, 110f, bottom)
+                canvas.skew(sin(phase.toDouble()).toFloat() * .045f, 0f)
+            }
+            Action.SIT -> canvas.scale(1.1f, .83f, 110f, bottom)
+            Action.SLEEP -> {
+                canvas.scale(1.27f, .56f, 110f, bottom)
+                canvas.rotate(-7f + pulse, 110f, bottom)
+            }
+            Action.STRETCH -> canvas.scale(1.23f + pulse * .025f, .75f, 110f, bottom)
+            Action.WAVE -> canvas.rotate(-11f + pulse * 10f, 110f, bottom - height * .55f)
+            Action.JUMP -> {
+                val p = kotlin.math.abs(sin(phase.toDouble() * .65)).toFloat()
+                canvas.scale(1f - p * .07f, 1f + p * .09f, 110f, bottom)
+            }
+            Action.IDLE -> canvas.scale(1f + pulse * .008f, 1f - pulse * .012f, 110f, bottom)
+        }
         paint.color = Color.WHITE
+        paint.alpha = 255
         canvas.drawBitmap(bitmap, null, rect, paint)
         canvas.restore()
+        if (current == Action.SLEEP) {
+            paint.color = ink
+            paint.textSize = 19f
+            canvas.drawText("Z", 175f, 90f + pulse * 5f, paint)
+        }
         if (isExcited()) drawHeart(canvas)
     }
 

@@ -34,6 +34,9 @@ class MainActivity : Activity() {
     private val ink = Color.rgb(64, 51, 47)
     private val coral = Color.rgb(238, 135, 95)
     private var pendingStart = false
+    private var importWithAi = true
+    private var photoBusy = false
+    private lateinit var photoStatus: TextView
     private lateinit var permissionSummary: TextView
     private lateinit var runningSummary: TextView
     private lateinit var photoPreview: ImageView
@@ -117,16 +120,23 @@ val scroll = ScrollView(this).apply {
         previewPanel.addView(label("你的小猫", 14f, true))
         body.addFull(previewPanel)
         body.addSpace(12)
-        body.addFull(button("从相册选择猫咪照片", filled = false) { pickPhoto() })
+        body.addFull(button("AI 识别并抠出猫咪（推荐）") { importWithAi = true; pickPhoto() })
+        body.addSpace(8)
+        body.addFull(button("直接导入原图", filled = false) { importWithAi = false; pickPhoto() })
+        body.addSpace(7)
+        photoStatus = label("AI 分割需 Google Play 服务；首次识别可能下载模型。", 12f)
+        body.addFull(photoStatus)
         body.addSpace(8)
         body.addFull(button("恢复内置手绘小猫", filled = false) {
             PetSettings.petImage(this).delete()
+            PetSettings.setAiCutout(this, false)
+            photoStatus.text = "已恢复内置小猫"
             refreshPhotoPreview()
             refreshPet()
             Toast.makeText(this, "已切换回内置小猫", Toast.LENGTH_SHORT).show()
         })
         body.addSpace(6)
-        body.addFull(label("建议上传透明背景 PNG；普通照片也可使用，但暂不支持 AI 自动抠图。", 12f))
+        body.addFull(label("请尽量使用单只猫的全身照片；复杂背景或多宠物可能抠错。", 12f))
         body.addSpace(25)
 
         body.addFull(label("显示模式", 19f, true))
@@ -190,11 +200,20 @@ val scroll = ScrollView(this).apply {
         body.addFull(runningSummary)
         body.addSpace(22)
 
-        body.addFull(label("AI 动画功能 · 下一阶段", 18f, true))
+        body.addFull(label("猫咪动作 · 手动测试", 18f, true))
         body.addSpace(8)
-        body.addFull(label("本版内置示例猫咪可走路、坐下、伸展、睡觉、挥爪，支持点击和拖拽。上传照片后会作为悬浮图片轻微摆动；AI 自动分割、生成真实猫咪多动作动画尚未接入。", 13f))
+        for ((name, action) in listOf(
+            "散步" to PetView.Action.WALK, "坐下" to PetView.Action.SIT,
+            "睡觉" to PetView.Action.SLEEP, "伸展" to PetView.Action.STRETCH,
+            "挥爪" to PetView.Action.WAVE, "跳跃" to PetView.Action.JUMP
+        )) {
+            body.addFull(button(name, filled = false) { playAction(action) })
+            body.addSpace(5)
+        }
         body.addSpace(8)
-        body.addFull(label("隐私：照片仅保存在手机 APP 的私有目录。本项目没有网络权限，也不会上传照片。", 12f))
+        body.addFull(label("V0.2：真实 AI 前景抠图；六种动作通过图片形变与移动模拟，不会生成新的猫咪四肢姿态。", 13f))
+        body.addSpace(8)
+        body.addFull(label("隐私：照片仅保存在手机 APP 的私有目录。模型首次可能通过 Google Play 服务下载；照片保存在手机本地。", 12f))
         refreshPhotoPreview()
         refreshStatus()
     }
@@ -276,6 +295,10 @@ val scroll = ScrollView(this).apply {
     }
 
     private fun pickPhoto() {
+        if (photoBusy) {
+            Toast.makeText(this, "照片处理中，请勿重复选择", Toast.LENGTH_SHORT).show()
+            return
+        }
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "image/*"
@@ -289,13 +312,69 @@ val scroll = ScrollView(this).apply {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != REQUEST_IMAGE || resultCode != RESULT_OK) return
         val uri = data?.data ?: return
+        if (importWithAi) importAiPhoto(uri) else importOriginalPhoto(uri)
+    }
+
+    private fun importOriginalPhoto(uri: Uri) {
         try {
             saveScaledImage(uri)
+            PetSettings.setAiCutout(this, false)
+            photoStatus.text = "已导入原图（没有抠图）"
             refreshPhotoPreview()
             refreshPet()
-            Toast.makeText(this, "已导入猫咪照片", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
-            Toast.makeText(this, "读取照片失败：${e.localizedMessage}", Toast.LENGTH_LONG).show()
+            photoStatus.text = "照片读取失败：" + e.localizedMessage
+        }
+    }
+
+    private fun importAiPhoto(uri: Uri) {
+        photoBusy = true
+        photoStatus.text = "读取照片中…"
+        Thread {
+            try {
+                val bitmap = CatPhotoProcessor.load(this, uri)
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) { photoBusy = false; return@runOnUiThread }
+                    photoStatus.text = "AI 正在识别和提取前景…"
+                    CatPhotoProcessor.cutout(bitmap) { result ->
+                        photoBusy = false
+                        if (!isFinishing && !isDestroyed) {
+                            result.fold(onSuccess = { output ->
+                                try {
+                                    CatPhotoProcessor.save(this, output)
+                                    PetSettings.setAiCutout(this, true)
+                                    refreshPhotoPreview()
+                                    refreshPet()
+                                    photoStatus.text = "AI 已完成前景抠图（请查看是否正确）"
+                                } catch (e: Exception) {
+                                    photoStatus.text = "保存失败：" + e.localizedMessage
+                                }
+                            }, onFailure = { e ->
+                                photoStatus.text = "AI 抠图失败：" + e.localizedMessage
+                            })
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    photoBusy = false
+                    if (!isFinishing && !isDestroyed) photoStatus.text = "图片读取失败：" + e.localizedMessage
+                }
+            }
+        }.start()
+    }
+
+    private fun playAction(action: PetView.Action) {
+        if (!PetSettings.isRunning(this)) {
+            Toast.makeText(this, "请先开启悬浮猫咪", Toast.LENGTH_SHORT).show()
+            return
+        }
+        try {
+            startService(Intent(this, FloatingPetService::class.java)
+                .setAction(FloatingPetService.ACTION_PLAY)
+                .putExtra(FloatingPetService.EXTRA_BEHAVIOR, action.name))
+        } catch (e: Exception) {
+            Toast.makeText(this, "动作切换失败：" + e.message, Toast.LENGTH_SHORT).show()
         }
     }
 
