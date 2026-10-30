@@ -250,9 +250,11 @@ val scroll = ScrollView(this).apply {
 
         body.addFull(label("真正会动的猫咪 · 逐帧动作", 19f, true))
         body.addSpace(7)
-        body.addFull(label("V0.4 可导入手机里的真实猫咪动作视频，或者用 AI 将一张猫咪照片生成动作视频后再导入。程序逐帧抠图，回放真实的四肢姿态变化。", 13f))
+        body.addFull(label("V0.5 统一采用 60 fps 输出节奏，每段视频最多提取 120 帧（前 2 秒）。会增强边缘、统一主体缩放，减少闪烁；原视频不足 60 fps 时不会生成新的真实动作姿态。", 13f))
         body.addSpace(7)
-        body.addFull(button("导入一段动作视频（MP4 等）") { showMotionPicker() })
+        body.addFull(button("导入一段动作视频（60 fps）") { showMotionPicker() })
+        body.addSpace(6)
+        body.addFull(button("预览已导入动作（60 fps）", filled = false) { showMotionPreviewPicker() })
         body.addSpace(6)
         body.addFull(button("打开 AI 图生视频平台（可灵）", filled = false) {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://kling.ai/")))
@@ -277,7 +279,7 @@ val scroll = ScrollView(this).apply {
             body.addSpace(5)
         }
         body.addSpace(8)
-        body.addFull(label("V0.4：优先播放已导入的真实逐帧动作；未导入的动作仍退回二维照片模拟。", 13f))
+        body.addFull(label("V0.5：60 fps 播放目标、边缘柔化、统一尺寸稳定化、动态阴影、循环衔接、左右镜像和动作预览。实际流畅度取决于设备及原视频帧率。", 13f))
         body.addSpace(8)
         body.addFull(label("隐私：照片仅保存在手机 APP 的私有目录。模型首次可能通过 Google Play 服务下载；照片保存在手机本地。", 12f))
         refreshPhotoPreview()
@@ -455,6 +457,42 @@ val scroll = ScrollView(this).apply {
         }.start()
     }
 
+    private fun showMotionPreviewPicker() {
+        val actions = listOf(
+            PetView.Action.WALK, PetView.Action.SIT, PetView.Action.SLEEP,
+            PetView.Action.STRETCH, PetView.Action.WAVE, PetView.Action.JUMP
+        ).filter { MotionFrames.count(this, it) >= 2 }
+        if (actions.isEmpty()) {
+            Toast.makeText(this, "先导入至少一段猫咪动作视频", Toast.LENGTH_LONG).show()
+            return
+        }
+        val translations = mapOf(
+            PetView.Action.WALK to "散步", PetView.Action.SIT to "坐下",
+            PetView.Action.SLEEP to "睡觉", PetView.Action.STRETCH to "伸展",
+            PetView.Action.WAVE to "挥爪", PetView.Action.JUMP to "跳跃"
+        )
+        val labels = actions.map {
+            (translations[it] ?: it.name) + " · " +
+                MotionFrames.count(this, it) + " 帧"
+        }.toTypedArray()
+        AlertDialog.Builder(this).setTitle("选择要预览的动作")
+            .setItems(labels) { _, selected ->
+                val action = actions[selected]
+                val preview = MotionPreviewView(this, action).apply {
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT, dp(320)
+                    )
+                    minimumHeight = dp(320)
+                }
+                AlertDialog.Builder(this)
+                    .setTitle(labels[selected] + " · " +
+                        MotionFrames.frameRate(this, action) + " fps")
+                    .setView(preview)
+                    .setPositiveButton("关闭", null)
+                    .show()
+            }.show()
+    }
+
     private fun showMotionPicker() {
         if (motionBusy) {
             Toast.makeText(this, "上一段动作视频仍在处理中", Toast.LENGTH_SHORT).show()
@@ -509,7 +547,7 @@ val scroll = ScrollView(this).apply {
                 val frames = MotionFrames.importVideo(this, uri, action) { current, total ->
                     runOnUiThread {
                         if (!isFinishing && !isDestroyed) {
-                            motionStatus.text = "动作逐帧抠图：${current}/${total} 帧"
+                            motionStatus.text = "60 fps 视频处理与边缘优化：${current}/${total} 帧"
                         }
                     }
                 }
@@ -517,7 +555,7 @@ val scroll = ScrollView(this).apply {
                     motionBusy = false
                     if (!isFinishing && !isDestroyed) {
                         reloadMotion()
-                        motionStatus.text = "导入成功：${action.name}（${frames} 帧）。" +
+                        motionStatus.text = "导入成功：${action.name}（${frames} 帧，60 fps）。" +
                             MotionFrames.summary(this)
                         playAction(action)
                     }
