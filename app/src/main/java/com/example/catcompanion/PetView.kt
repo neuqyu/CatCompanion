@@ -69,6 +69,8 @@ internal class PetView(context: Context) : View(context) {
 
     fun isExcited() = SystemClock.uptimeMillis() < excitedUntil
 
+    fun hasRealMotion(): Boolean = (frameStream?.count ?: 0) >= 2
+
     /** Motion footage takes priority over still-photo transformations. */
     private fun loadMotionFor(action: Action) {
         if (motionAction == action) return
