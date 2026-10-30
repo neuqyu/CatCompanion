@@ -1,0 +1,11 @@
+<resources>
+    <style name="Theme.CatCompanion" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:statusBarColor">#FFF7EF</item>
+        <item name="android:navigationBarColor">#FFF7EF</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:colorAccent">#F49C64</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+</resources>

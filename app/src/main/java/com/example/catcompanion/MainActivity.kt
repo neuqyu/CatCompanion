@@ -1,0 +1,321 @@
+package com.example.catcompanion
+
+import android.Manifest
+import android.app.Activity
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Color
+import android.graphics.ImageDecoder
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.provider.Settings
+import android.view.Gravity
+import android.view.View
+import android.widget.Button
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.RadioButton
+import android.widget.RadioGroup
+import android.widget.ScrollView
+import android.widget.SeekBar
+import android.widget.TextView
+import android.widget.Toast
+import java.io.FileOutputStream
+import kotlin.math.max
+
+class MainActivity : Activity() {
+    companion object { private const val REQUEST_IMAGE = 1002 }
+
+    private val background = Color.rgb(255, 248, 241)
+    private val ink = Color.rgb(64, 51, 47)
+    private val coral = Color.rgb(238, 135, 95)
+    private var pendingStart = false
+    private lateinit var permissionSummary: TextView
+    private lateinit var runningSummary: TextView
+    private lateinit var photoPreview: ImageView
+    private lateinit var sizeLabel: TextView
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        window.statusBarColor = background
+        window.navigationBarColor = background
+        @Suppress("DEPRECATION")
+        window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+        renderScreen()
+    }
+
+    private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
+
+    private fun panel(color: Int = Color.WHITE, radiusDp: Int = 22): GradientDrawable =
+        GradientDrawable().apply { setColor(color); cornerRadius = dp(radiusDp).toFloat() }
+
+    private fun label(value: String, textSize: Float = 15f, bold: Boolean = false): TextView =
+        TextView(this).apply {
+            text = value
+            setTextColor(ink)
+            this.textSize = textSize
+            if (bold) typeface = Typeface.DEFAULT_BOLD
+            setLineSpacing(dp(3).toFloat(), 1.08f)
+        }
+
+    private fun spacer(size: Int): View = View(this).apply {
+        layoutParams = LinearLayout.LayoutParams(1, dp(size))
+    }
+
+    private fun button(title: String, filled: Boolean = true, onTap: () -> Unit): Button =
+        Button(this).apply {
+            text = title
+            isAllCaps = false
+            textSize = 15f
+            setTextColor(if (filled) Color.WHITE else ink)
+            background = panel(if (filled) coral else Color.rgb(249, 232, 217), 14)
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            setOnClickListener { onTap() }
+        }
+
+    private fun LinearLayout.addSpace(size: Int) { addView(spacer(size)) }
+
+    private fun LinearLayout.addFull(view: View) {
+        addView(view, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+    }
+
+    private fun renderScreen() {
+        val scroll = ScrollView(this).apply { setBackgroundColor(background); fillViewport = true }
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(23), dp(30), dp(23), dp(48))
+        }
+        scroll.addView(body)
+        setContentView(scroll)
+
+        body.addFull(label("喵在身边 🐾", 30f, true))
+        body.addSpace(8)
+        body.addFull(label("让你喜欢的小猫，陪你在安卓手机里散步。", 15f))
+        body.addSpace(24)
+
+        val previewPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            background = panel(Color.rgb(255, 239, 220))
+            setPadding(dp(20), dp(16), dp(20), dp(16))
+        }
+        photoPreview = ImageView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(126), dp(126))
+            scaleType = ImageView.ScaleType.FIT_CENTER
+        }
+        previewPanel.addView(photoPreview)
+        previewPanel.addSpace(6)
+        previewPanel.addView(label("你的小猫", 14f, true))
+        body.addFull(previewPanel)
+        body.addSpace(12)
+        body.addFull(button("从相册选择猫咪照片", filled = false) { pickPhoto() })
+        body.addSpace(8)
+        body.addFull(button("恢复内置手绘小猫", filled = false) {
+            PetSettings.petImage(this).delete()
+            refreshPhotoPreview()
+            refreshPet()
+            Toast.makeText(this, "已切换回内置小猫", Toast.LENGTH_SHORT).show()
+        })
+        body.addSpace(6)
+        body.addFull(label("建议上传透明背景 PNG；普通照片也可使用，但暂不支持 AI 自动抠图。", 12f))
+        body.addSpace(25)
+
+        body.addFull(label("显示模式", 19f, true))
+        body.addSpace(10)
+        val radio = RadioGroup(this).apply {
+            orientation = RadioGroup.VERTICAL
+            background = panel()
+            setPadding(dp(16), dp(10), dp(16), dp(10))
+        }
+        val everywhere = RadioButton(this).apply { id = View.generateViewId(); text = "全局陪伴：其他 APP 中也显示"; textSize = 14f }
+        val homeOnly = RadioButton(this).apply { id = View.generateViewId(); text = "仅桌面：打开其他 APP 后隐藏"; textSize = 14f }
+        radio.addView(everywhere)
+        radio.addView(homeOnly)
+        radio.check(if (PetSettings.mode(this) == DisplayMode.HOME_ONLY) homeOnly.id else everywhere.id)
+        radio.setOnCheckedChangeListener { _, checked ->
+            PetSettings.setMode(this, if (checked == homeOnly.id) DisplayMode.HOME_ONLY else DisplayMode.EVERYWHERE)
+            if (PetSettings.isRunning(this)) refreshPet()
+            refreshStatus()
+        }
+        body.addFull(radio)
+        body.addSpace(8)
+        body.addFull(label("仅桌面模式使用“使用情况访问权限”判断当前 APP；全局模式无需该权限。", 12f))
+        body.addSpace(22)
+
+        body.addFull(label("猫咪尺寸", 19f, true))
+        body.addSpace(6)
+        sizeLabel = label("", 13f)
+        body.addFull(sizeLabel)
+        val seek = SeekBar(this).apply {
+            max = 170
+            progress = PetSettings.size(this@MainActivity) - 90
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
+                    PetSettings.setSize(this@MainActivity, 90 + p)
+                    sizeLabel.text = "${90 + p} dp（可随时调整）"
+                    if (fromUser && PetSettings.isRunning(this@MainActivity)) refreshPet()
+                }
+                override fun onStartTrackingTouch(s: SeekBar?) = Unit
+                override fun onStopTrackingTouch(s: SeekBar?) = Unit
+            })
+        }
+        sizeLabel.text = "${PetSettings.size(this)} dp（可随时调整）"
+        body.addFull(seek)
+        body.addSpace(16)
+
+        body.addFull(label("权限与运行", 19f, true))
+        body.addSpace(8)
+        permissionSummary = label("", 13f)
+        body.addFull(permissionSummary)
+        body.addSpace(10)
+        body.addFull(button("① 授予悬浮窗权限", filled = false) { openOverlaySettings() })
+        body.addSpace(8)
+        body.addFull(button("② 仅桌面模式授权使用情况访问", filled = false) { openUsageSettings() })
+        body.addSpace(18)
+
+        body.addFull(button("开启猫咪悬浮宠物") { startRequested() })
+        body.addSpace(8)
+        body.addFull(button("关闭猫咪", filled = false) { stopPet() })
+        body.addSpace(8)
+        runningSummary = label("", 13f)
+        body.addFull(runningSummary)
+        body.addSpace(22)
+
+        body.addFull(label("AI 动画功能 · 下一阶段", 18f, true))
+        body.addSpace(8)
+        body.addFull(label("本版内置示例猫咪可走路、坐下、伸展、睡觉、挥爪，支持点击和拖拽。上传照片后会作为悬浮图片轻微摆动；AI 自动分割、生成真实猫咪多动作动画尚未接入。", 13f))
+        body.addSpace(8)
+        body.addFull(label("隐私：照片仅保存在手机 APP 的私有目录。本项目没有网络权限，也不会上传照片。", 12f))
+        refreshPhotoPreview()
+        refreshStatus()
+    }
+
+    private fun refreshPhotoPreview() {
+        val bitmap = if (PetSettings.hasImage(this)) BitmapFactory.decodeFile(PetSettings.petImage(this).path) else null
+        if (bitmap != null) photoPreview.setImageBitmap(bitmap)
+        else photoPreview.setImageResource(R.drawable.ic_cat)
+    }
+
+    private fun refreshStatus() {
+        if (!::permissionSummary.isInitialized) return
+        val overlay = PermissionChecks.overlayAllowed(this)
+        val usage = PermissionChecks.usageAllowed(this)
+        permissionSummary.text = "悬浮窗：${if (overlay) "已授权 ✓" else "未授权"}    使用情况访问：${if (usage) "已授权 ✓" else "未授权"}"
+        runningSummary.text = if (PetSettings.isRunning(this)) "运行状态：已开启，按 Home 键查看小猫。" else "运行状态：未开启。"
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (pendingStart && hasRequiredPermissions()) {
+            pendingStart = false
+            startPet()
+        }
+        if (::permissionSummary.isInitialized) refreshStatus()
+    }
+
+    private fun hasRequiredPermissions(): Boolean = PermissionChecks.overlayAllowed(this) &&
+        (PetSettings.mode(this) == DisplayMode.EVERYWHERE || PermissionChecks.usageAllowed(this))
+
+    private fun startRequested() {
+        if (!hasRequiredPermissions()) {
+            pendingStart = true
+            if (!PermissionChecks.overlayAllowed(this)) {
+                Toast.makeText(this, "请先授权悬浮窗，再返回应用", Toast.LENGTH_LONG).show()
+                openOverlaySettings()
+            } else {
+                Toast.makeText(this, "仅桌面模式需要使用情况访问权限", Toast.LENGTH_LONG).show()
+                openUsageSettings()
+            }
+            return
+        }
+        startPet()
+    }
+
+    private fun startPet() {
+        val service = Intent(this, FloatingPetService::class.java).setAction(FloatingPetService.ACTION_START)
+        try {
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(service) else startService(service)
+            Toast.makeText(this, "小猫已开启！按 Home 键看看吧", Toast.LENGTH_LONG).show()
+            // The service sets the running flag asynchronously.
+            window.decorView.postDelayed({ refreshStatus() }, 250L)
+        } catch (e: Exception) {
+            Toast.makeText(this, "启动失败：${e.localizedMessage}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun refreshPet() {
+        if (!PetSettings.isRunning(this)) return
+        try { startService(Intent(this, FloatingPetService::class.java).setAction(FloatingPetService.ACTION_REFRESH)) }
+        catch (_: Exception) { /* system may have stopped service */ }
+    }
+
+    private fun stopPet() {
+        pendingStart = false
+        stopService(Intent(this, FloatingPetService::class.java))
+        PetSettings.setRunning(this, false)
+        refreshStatus()
+    }
+
+    private fun openOverlaySettings() {
+        val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+            Uri.parse("package:$packageName"))
+        startActivity(intent)
+    }
+
+    private fun openUsageSettings() {
+        startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+    }
+
+    private fun pickPhoto() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "image/*"
+        }
+        @Suppress("DEPRECATION")
+        startActivityForResult(intent, REQUEST_IMAGE)
+    }
+
+    @Deprecated("Use ActivityResult API when AndroidX is added")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQUEST_IMAGE || resultCode != RESULT_OK) return
+        val uri = data?.data ?: return
+        try {
+            saveScaledImage(uri)
+            refreshPhotoPreview()
+            refreshPet()
+            Toast.makeText(this, "已导入猫咪照片", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Toast.makeText(this, "读取照片失败：${e.localizedMessage}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun saveScaledImage(uri: Uri) {
+        val bitmap: Bitmap = if (Build.VERSION.SDK_INT >= 28) {
+            val source = ImageDecoder.createSource(contentResolver, uri)
+            ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+                val w = info.size.width
+                val h = info.size.height
+                val ratio = minOf(1f, 640f / max(w, h).toFloat())
+                decoder.setTargetSize(max(1, (w * ratio).toInt()), max(1, (h * ratio).toInt()))
+                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+            }
+        } else {
+            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            contentResolver.openInputStream(uri).use { BitmapFactory.decodeStream(it, null, options) }
+            var sample = 1
+            while (max(options.outWidth, options.outHeight) / sample > 640) sample *= 2
+            val readOptions = BitmapFactory.Options().apply { inSampleSize = sample }
+            contentResolver.openInputStream(uri).use { BitmapFactory.decodeStream(it, null, readOptions) }
+                ?: error("照片格式不支持")
+        }
+        FileOutputStream(PetSettings.petImage(this)).use { output ->
+            check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) { "保存照片失败" }
+        }
+        bitmap.recycle()
+    }
+}
