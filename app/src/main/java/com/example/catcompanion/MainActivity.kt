@@ -84,7 +84,12 @@ class MainActivity : Activity() {
     }
 
     private fun renderScreen() {
-        val scroll = ScrollView(this).apply { setBackgroundColor(background); fillViewport = true }
+        
+val scroll = ScrollView(this).apply {
+    setBackgroundColor(this@MainActivity.background)
+    setFillViewport(true)
+}
+  
         val body = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(23), dp(30), dp(23), dp(48))
