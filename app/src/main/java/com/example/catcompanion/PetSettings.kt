@@ -26,6 +26,11 @@ internal object PetSettings {
         prefs(context).edit().putBoolean("running", value).apply()
     }
 
+    fun wasAiCutout(context: Context): Boolean = prefs(context).getBoolean("was_ai_cutout", false)
+    fun setAiCutout(context: Context, value: Boolean) {
+        prefs(context).edit().putBoolean("was_ai_cutout", value).apply()
+    }
+
     fun petImage(context: Context) = File(context.filesDir, "custom_pet.png")
     fun hasImage(context: Context) = petImage(context).isFile
 }
