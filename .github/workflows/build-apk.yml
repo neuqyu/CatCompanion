@@ -2,7 +2,7 @@ name: Build installable Android APK
 
 on:
   push:
-    branches: [main, master, 'feature/ai-cat-cutout-v0.2', 'feature/v0.3-photo-motion-polish']
+    branches: [main, master, 'feature/ai-cat-cutout-v0.2', 'feature/v0.3-photo-motion-polish', 'hotfix/v0.3.1-ai-model-diagnostics']
   pull_request:
   workflow_dispatch:
 
@@ -43,7 +43,7 @@ jobs:
       - name: Publish installable APK as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: CatCompanion-V0.3-Android-APK
+          name: CatCompanion-V0.3.1-Android-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14

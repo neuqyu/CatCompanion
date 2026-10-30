@@ -80,7 +80,13 @@ internal object CatPhotoProcessor {
                 }
             }.addOnFailureListener { error ->
                 segmenter.close()
-                done(Result.failure(error))
+                val ml = error as? com.google.mlkit.common.MlKitException
+                val detail = if (ml != null) {
+                    "ML Kit 错误码 ${ml.errorCode}：${error.localizedMessage}"
+                } else {
+                    "AI 分割错误（${error.javaClass.simpleName}）：${error.localizedMessage}"
+                }
+                done(Result.failure(IllegalStateException(detail, error)))
             }
         }
     }
@@ -89,7 +95,7 @@ internal object CatPhotoProcessor {
      * Remove transparent margins returned by ML Kit, preserve 4% padding so
      * paws and ears do not touch the floating window boundary.
      */
-    private fun cropToContent(source: Bitmap): Bitmap {
+    fun cropToContent(source: Bitmap): Bitmap {
         val w = source.width
         val h = source.height
         require(w > 0 && h > 0)

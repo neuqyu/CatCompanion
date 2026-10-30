@@ -12,8 +12,8 @@ android {
         applicationId = "com.example.catcompanion"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.3.1"
     }
 
     buildTypes {
@@ -38,6 +38,7 @@ kotlin {
   
 
 dependencies {
+    implementation("com.google.android.gms:play-services-base:18.11.0")
     implementation("com.google.mlkit:image-labeling:17.0.9")
     implementation("com.google.android.gms:play-services-mlkit-subject-segmentation:16.0.0-beta1")
 }
