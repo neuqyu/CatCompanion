@@ -23,7 +23,7 @@ internal class PetView(context: Context) : View(context) {
     private var excitedUntil = 0L
     private var imported: Bitmap? = null
     private var motionAction: Action? = null
-    private var motionFrames = emptyList<Bitmap>()
+    private var frameStream: FrameStream? = null
     private var loadedPhotoSignature = Long.MIN_VALUE
     var facingRight: Boolean = true
     var isWalking = true
@@ -72,9 +72,9 @@ internal class PetView(context: Context) : View(context) {
     /** Motion footage takes priority over still-photo transformations. */
     private fun loadMotionFor(action: Action) {
         if (motionAction == action) return
-        val nextFrames = MotionFrames.load(context, action)
-        motionFrames.forEach { it.recycle() }
-        motionFrames = nextFrames
+        val nextStream = FrameStream(context, action) { postInvalidateOnAnimation() }
+        frameStream?.close()
+        frameStream = nextStream
         motionAction = action
     }
 
@@ -87,8 +87,8 @@ internal class PetView(context: Context) : View(context) {
     override fun onDetachedFromWindow() {
         imported?.recycle()
         imported = null
-        motionFrames.forEach { it.recycle() }
-        motionFrames = emptyList()
+        frameStream?.close()
+        frameStream = null
         super.onDetachedFromWindow()
     }
 
@@ -99,23 +99,27 @@ internal class PetView(context: Context) : View(context) {
         val ms = SystemClock.uptimeMillis()
         val t = ms / 1000f
         val phase = (ms - actionSince) / 180f
-        paint.color = Color.argb(45, 69, 45, 43)
+        val activeMotion = frameStream?.takeIf { it.count >= 2 }
+        val jumping = current == Action.JUMP
+        val shadowWidth = if (jumping) 57f else 72f
+        paint.color = Color.argb(if (jumping) 24 else 42, 69, 45, 43)
         paint.style = Paint.Style.FILL
-        canvas.drawOval(RectF(38f, 185f, 188f, 201f), paint)
-        val bob = when (current) {
+        canvas.drawOval(RectF(110f - shadowWidth, 194f, 110f + shadowWidth, 202f), paint)
+        val bob = if (activeMotion != null) 0f else when (current) {
             Action.WALK -> if (isWalking) sin(phase.toDouble()).toFloat() * 3.8f else 0f
             Action.JUMP -> -kotlin.math.abs(sin(phase.toDouble() * 0.65)).toFloat() * 26f
             else -> sin(t.toDouble()).toFloat() * 1.2f
         }
         canvas.translate(0f, bob)
         if (!facingRight) canvas.scale(-1f, 1f, 110f, 0f)
+        val clipFrame = activeMotion?.get(ms - actionSince)
         when {
-            motionFrames.size >= 2 -> drawMotionFrame(canvas, motionFrames[
-                MotionFrames.frameIndex(ms - actionSince, motionFrames.size)])
+            clipFrame != null -> drawMotionFrame(canvas, clipFrame)
             imported != null -> drawImportedPhoto(canvas, imported!!, t, phase)
             else -> drawIllustratedCat(canvas, phase, t)
         }
         canvas.restore()
+        if (activeMotion != null) postInvalidateOnAnimation()
     }
 
     private fun drawMotionFrame(canvas: Canvas, frame: Bitmap) {
