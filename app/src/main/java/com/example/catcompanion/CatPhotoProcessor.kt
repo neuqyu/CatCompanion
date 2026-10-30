@@ -80,7 +80,13 @@ internal object CatPhotoProcessor {
                 }
             }.addOnFailureListener { error ->
                 segmenter.close()
-                done(Result.failure(error))
+                val ml = error as? com.google.mlkit.common.MlKitException
+                val detail = if (ml != null) {
+                    "ML Kit 错误码 ${ml.errorCode}：${error.localizedMessage}"
+                } else {
+                    "AI 分割错误（${error.javaClass.simpleName}）：${error.localizedMessage}"
+                }
+                done(Result.failure(IllegalStateException(detail, error)))
             }
         }
     }
