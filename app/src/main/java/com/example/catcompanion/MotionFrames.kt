@@ -57,6 +57,11 @@ internal object MotionFrames {
             "已导入：${actions.joinToString("、")}"
     }
 
+    fun frameFiles(context: Context, action: PetView.Action): List<File> =
+        folder(context, action).listFiles()
+            ?.filter { it.isFile && it.name.matches(Regex("frame_[0-9]{3}\\.png")) }
+            ?.sortedBy { it.name }?.take(MAX_FRAMES) ?: emptyList()
+
     fun load(context: Context, action: PetView.Action): List<Bitmap> {
         val files = folder(context, action).listFiles()
             ?.filter { it.isFile && it.name.matches(Regex("frame_[0-9]{3}\\.png")) }
