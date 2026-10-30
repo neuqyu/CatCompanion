@@ -180,6 +180,47 @@ val scroll = ScrollView(this).apply {
         }
         sizeLabel.text = "${PetSettings.size(this)} dp（可随时调整）"
         body.addFull(seek)
+        body.addSpace(17)
+
+        body.addFull(label("活动频率与安静模式", 19f, true))
+        body.addSpace(6)
+        val activityDescription = label("活动频率：${PetSettings.activity(this)}/5", 13f)
+        body.addFull(activityDescription)
+        val levelSeek = SeekBar(this).apply {
+            max = 4
+            progress = PetSettings.activity(this@MainActivity) - 1
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
+                    activityDescription.text = "活动频率：${p + 1}/5"
+                    if (fromUser) {
+                        PetSettings.setActivity(this@MainActivity, p + 1)
+                        refreshPet()
+                    }
+                }
+                override fun onStartTrackingTouch(s: SeekBar?) = Unit
+                override fun onStopTrackingTouch(s: SeekBar?) = Unit
+            })
+        }
+        body.addFull(levelSeek)
+        var autoButton: Button? = null
+        fun autoLabel() = if (PetSettings.autoMotion(this)) "暂停自动动作" else "恢复自动动作"
+        autoButton = button(autoLabel(), filled = false) {
+            PetSettings.setAutoMotion(this, !PetSettings.autoMotion(this))
+            autoButton?.text = autoLabel()
+            refreshPet()
+        }
+        body.addFull(autoButton)
+        body.addSpace(8)
+        body.addFull(button("小猫恢复默认位置", filled = false) {
+            PetSettings.clearPosition(this)
+            if (PetSettings.isRunning(this)) {
+                startService(Intent(this, FloatingPetService::class.java)
+                    .setAction(FloatingPetService.ACTION_RESET_POSITION))
+            }
+            Toast.makeText(this, "已重置小猫位置", Toast.LENGTH_SHORT).show()
+        })
+        body.addSpace(7)
+        body.addFull(label("可拖动小猫；位置会被记住。暂停自动动作后仍可点击互动和手动触发动作。", 12f))
         body.addSpace(16)
 
         body.addFull(label("权限与运行", 19f, true))
@@ -211,7 +252,7 @@ val scroll = ScrollView(this).apply {
             body.addSpace(5)
         }
         body.addSpace(8)
-        body.addFull(label("V0.2：真实 AI 前景抠图；六种动作通过图片形变与移动模拟，不会生成新的猫咪四肢姿态。", 13f))
+        body.addFull(label("V0.3：AI 主体识别、透明裁边、活动频率和安静模式。六种动作仍为二维模拟，并非 AI 生成真实四肢动画。", 13f))
         body.addSpace(8)
         body.addFull(label("隐私：照片仅保存在手机 APP 的私有目录。模型首次可能通过 Google Play 服务下载；照片保存在手机本地。", 12f))
         refreshPhotoPreview()
@@ -329,36 +370,58 @@ val scroll = ScrollView(this).apply {
 
     private fun importAiPhoto(uri: Uri) {
         photoBusy = true
-        photoStatus.text = "读取照片中…"
+        photoStatus.text = "正在准备照片…"
         Thread {
             try {
-                val bitmap = CatPhotoProcessor.load(this, uri)
+                val original = CatPhotoProcessor.load(this, uri)
                 runOnUiThread {
-                    if (isFinishing || isDestroyed) { photoBusy = false; return@runOnUiThread }
-                    photoStatus.text = "AI 正在识别和提取前景…"
-                    CatPhotoProcessor.cutout(bitmap) { result ->
+                    if (isFinishing || isDestroyed) {
                         photoBusy = false
-                        if (!isFinishing && !isDestroyed) {
-                            result.fold(onSuccess = { output ->
-                                try {
-                                    CatPhotoProcessor.save(this, output)
-                                    PetSettings.setAiCutout(this, true)
-                                    refreshPhotoPreview()
-                                    refreshPet()
-                                    photoStatus.text = "AI 已完成前景抠图（请查看是否正确）"
-                                } catch (e: Exception) {
-                                    photoStatus.text = "保存失败：" + e.localizedMessage
+                        original.recycle()
+                        return@runOnUiThread
+                    }
+                    photoStatus.text = "AI 正在识别猫咪和提取前景…"
+                    CatPhotoProcessor.cutout(original) { result ->
+                        Thread {
+                            val output = result.getOrNull()
+                            val errorText = try {
+                                if (output != null) {
+                                    CatPhotoProcessor.save(this, output.bitmap)
+                                    null
+                                } else result.exceptionOrNull()?.localizedMessage ?: "模型没有返回结果"
+                            } catch (error: Exception) {
+                                error.localizedMessage ?: "保存失败"
+                            } finally {
+                                original.recycle()
+                                output?.bitmap?.recycle()
+                            }
+                            runOnUiThread {
+                                photoBusy = false
+                                if (!isFinishing && !isDestroyed) {
+                                    if (errorText == null) {
+                                        PetSettings.setAiCutout(this, true)
+                                        refreshPhotoPreview()
+                                        refreshPet()
+                                        val confidence = output?.catConfidence
+                                        photoStatus.text = if (confidence != null) {
+                                            "AI 抠图成功 · 猫咪识别置信度：${(confidence * 100).toInt()}%"
+                                        } else {
+                                            "已提取前景，但未确认识别为猫咪，请检查预览"
+                                        }
+                                    } else {
+                                        photoStatus.text = "AI 处理失败：" + errorText + "；可尝试直接导入原图"
+                                    }
                                 }
-                            }, onFailure = { e ->
-                                photoStatus.text = "AI 抠图失败：" + e.localizedMessage
-                            })
-                        }
+                            }
+                        }.start()
                     }
                 }
-            } catch (e: Exception) {
+            } catch (error: Exception) {
                 runOnUiThread {
                     photoBusy = false
-                    if (!isFinishing && !isDestroyed) photoStatus.text = "图片读取失败：" + e.localizedMessage
+                    if (!isFinishing && !isDestroyed) {
+                        photoStatus.text = "读取图片失败：" + (error.localizedMessage ?: "未知原因")
+                    }
                 }
             }
         }.start()
@@ -397,9 +460,10 @@ val scroll = ScrollView(this).apply {
             contentResolver.openInputStream(uri).use { BitmapFactory.decodeStream(it, null, readOptions) }
                 ?: error("照片格式不支持")
         }
-        FileOutputStream(PetSettings.petImage(this)).use { output ->
-            check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) { "保存照片失败" }
+        try {
+            CatPhotoProcessor.save(this, bitmap)
+        } finally {
+            bitmap.recycle()
         }
-        bitmap.recycle()
     }
 }
