@@ -22,6 +22,8 @@ internal class PetView(context: Context) : View(context) {
     private var actionSince = SystemClock.uptimeMillis()
     private var excitedUntil = 0L
     private var imported: Bitmap? = null
+    private var motionAction: Action? = null
+    private var motionFrames = emptyList<Bitmap>()
     private var loadedPhotoSignature = Long.MIN_VALUE
     var facingRight: Boolean = true
     var isWalking = true
@@ -29,7 +31,7 @@ internal class PetView(context: Context) : View(context) {
     private val cream = Color.rgb(255, 222, 173)
     private val orange = Color.rgb(242, 170, 105)
 
-    init { loadPhoto() }
+    init { loadPhoto(); loadMotionFor(current) }
 
     fun loadPhoto() {
         val file = PetSettings.petImage(context)
@@ -51,12 +53,14 @@ internal class PetView(context: Context) : View(context) {
     }
 
     fun setBehavior(next: Action) {
+        loadMotionFor(next)
         current = next
         actionSince = SystemClock.uptimeMillis()
         invalidate()
     }
 
     fun poke() {
+        loadMotionFor(Action.WAVE)
         current = Action.WAVE
         actionSince = SystemClock.uptimeMillis()
         excitedUntil = actionSince + 1900L
@@ -64,6 +68,29 @@ internal class PetView(context: Context) : View(context) {
     }
 
     fun isExcited() = SystemClock.uptimeMillis() < excitedUntil
+
+    /** Motion footage takes priority over still-photo transformations. */
+    private fun loadMotionFor(action: Action) {
+        if (motionAction == action) return
+        val nextFrames = MotionFrames.load(context, action)
+        motionFrames.forEach { it.recycle() }
+        motionFrames = nextFrames
+        motionAction = action
+    }
+
+    fun refreshMotion() {
+        motionAction = null
+        loadMotionFor(current)
+        invalidate()
+    }
+
+    override fun onDetachedFromWindow() {
+        imported?.recycle()
+        imported = null
+        motionFrames.forEach { it.recycle() }
+        motionFrames = emptyList()
+        super.onDetachedFromWindow()
+    }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
@@ -82,8 +109,21 @@ internal class PetView(context: Context) : View(context) {
         }
         canvas.translate(0f, bob)
         if (!facingRight) canvas.scale(-1f, 1f, 110f, 0f)
-        if (imported == null) drawIllustratedCat(canvas, phase, t) else drawImportedPhoto(canvas, imported!!, t, phase)
+        when {
+            motionFrames.size >= 2 -> drawMotionFrame(canvas, motionFrames[
+                MotionFrames.frameIndex(ms - actionSince, motionFrames.size)])
+            imported != null -> drawImportedPhoto(canvas, imported!!, t, phase)
+            else -> drawIllustratedCat(canvas, phase, t)
+        }
         canvas.restore()
+    }
+
+    private fun drawMotionFrame(canvas: Canvas, frame: Bitmap) {
+        paint.color = Color.WHITE
+        paint.alpha = 255
+        paint.style = Paint.Style.FILL
+        canvas.drawBitmap(frame, null, RectF(0f, 0f, 220f, 220f), paint)
+        if (isExcited()) drawHeart(canvas)
     }
 
     /** Shape transforms only; not synthesized limb motion. */

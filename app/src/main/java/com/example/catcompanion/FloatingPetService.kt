@@ -30,6 +30,7 @@ class FloatingPetService : Service() {
         const val ACTION_REFRESH = "com.example.catcompanion.REFRESH"
         const val ACTION_PLAY = "com.example.catcompanion.PLAY"
         const val ACTION_RESET_POSITION = "com.example.catcompanion.RESET_POSITION"
+        const val ACTION_RELOAD_MOTION = "com.example.catcompanion.RELOAD_MOTION"
         const val EXTRA_BEHAVIOR = "behavior"
         const val ACTION_STOP = "com.example.catcompanion.STOP"
         private const val CHANNEL = "cat_companion_running"
@@ -91,6 +92,8 @@ class FloatingPetService : Service() {
                 manualActionUntil = nextActionAt
             } else if (intent?.action == ACTION_RESET_POSITION) {
                 resetPosition()
+            } else if (intent?.action == ACTION_RELOAD_MOTION) {
+                catView?.refreshMotion()
             } else {
                 resizePet()
                 catView?.loadPhoto()
