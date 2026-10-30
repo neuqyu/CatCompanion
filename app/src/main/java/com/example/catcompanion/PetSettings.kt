@@ -31,6 +31,33 @@ internal object PetSettings {
         prefs(context).edit().putBoolean("was_ai_cutout", value).apply()
     }
 
+    fun autoMotion(context: Context): Boolean = prefs(context).getBoolean("auto_motion", true)
+    fun setAutoMotion(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean("auto_motion", enabled).apply()
+    }
+
+    fun activity(context: Context): Int = prefs(context).getInt("activity", 3).coerceIn(1, 5)
+    fun setActivity(context: Context, level: Int) {
+        prefs(context).edit().putInt("activity", level.coerceIn(1, 5)).apply()
+    }
+
+    fun savedPosition(context: Context): Pair<Float, Float>? {
+        val prefs = prefs(context)
+        return if (prefs.contains("position_x") && prefs.contains("position_y"))
+            Pair(prefs.getFloat("position_x", .5f).coerceIn(0f, 1f),
+                 prefs.getFloat("position_y", .85f).coerceIn(0f, 1f))
+        else null
+    }
+
+    fun setPosition(context: Context, x: Float, y: Float) {
+        prefs(context).edit().putFloat("position_x", x.coerceIn(0f, 1f))
+            .putFloat("position_y", y.coerceIn(0f, 1f)).apply()
+    }
+
+    fun clearPosition(context: Context) {
+        prefs(context).edit().remove("position_x").remove("position_y").apply()
+    }
+
     fun petImage(context: Context) = File(context.filesDir, "custom_pet.png")
     fun hasImage(context: Context) = petImage(context).isFile
 }
