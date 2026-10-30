@@ -312,13 +312,69 @@ val scroll = ScrollView(this).apply {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != REQUEST_IMAGE || resultCode != RESULT_OK) return
         val uri = data?.data ?: return
+        if (importWithAi) importAiPhoto(uri) else importOriginalPhoto(uri)
+    }
+
+    private fun importOriginalPhoto(uri: Uri) {
         try {
             saveScaledImage(uri)
+            PetSettings.setAiCutout(this, false)
+            photoStatus.text = "已导入原图（没有抠图）"
             refreshPhotoPreview()
             refreshPet()
-            Toast.makeText(this, "已导入猫咪照片", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
-            Toast.makeText(this, "读取照片失败：${e.localizedMessage}", Toast.LENGTH_LONG).show()
+            photoStatus.text = "照片读取失败：" + e.localizedMessage
+        }
+    }
+
+    private fun importAiPhoto(uri: Uri) {
+        photoBusy = true
+        photoStatus.text = "读取照片中…"
+        Thread {
+            try {
+                val bitmap = CatPhotoProcessor.load(this, uri)
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) { photoBusy = false; return@runOnUiThread }
+                    photoStatus.text = "AI 正在识别和提取前景…"
+                    CatPhotoProcessor.cutout(bitmap) { result ->
+                        photoBusy = false
+                        if (!isFinishing && !isDestroyed) {
+                            result.fold(onSuccess = { output ->
+                                try {
+                                    CatPhotoProcessor.save(this, output)
+                                    PetSettings.setAiCutout(this, true)
+                                    refreshPhotoPreview()
+                                    refreshPet()
+                                    photoStatus.text = "AI 已完成前景抠图（请查看是否正确）"
+                                } catch (e: Exception) {
+                                    photoStatus.text = "保存失败：" + e.localizedMessage
+                                }
+                            }, onFailure = { e ->
+                                photoStatus.text = "AI 抠图失败：" + e.localizedMessage
+                            })
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    photoBusy = false
+                    if (!isFinishing && !isDestroyed) photoStatus.text = "图片读取失败：" + e.localizedMessage
+                }
+            }
+        }.start()
+    }
+
+    private fun playAction(action: PetView.Action) {
+        if (!PetSettings.isRunning(this)) {
+            Toast.makeText(this, "请先开启悬浮猫咪", Toast.LENGTH_SHORT).show()
+            return
+        }
+        try {
+            startService(Intent(this, FloatingPetService::class.java)
+                .setAction(FloatingPetService.ACTION_PLAY)
+                .putExtra(FloatingPetService.EXTRA_BEHAVIOR, action.name))
+        } catch (e: Exception) {
+            Toast.makeText(this, "动作切换失败：" + e.message, Toast.LENGTH_SHORT).show()
         }
     }
 
