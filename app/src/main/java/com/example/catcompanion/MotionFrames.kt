@@ -39,6 +39,18 @@ internal object MotionFrames {
         folder(context, action).deleteRecursively()
     }
 
+    fun clearAll(context: Context) {
+        root(context).deleteRecursively()
+    }
+
+    fun summary(context: Context): String {
+        val actions = PetView.Action.entries
+            .filter { count(context, it) >= 2 }
+            .map { it.name }
+        return if (actions.isEmpty()) "还没有真实逐帧动作" else
+            "已导入：${actions.joinToString("、")}"
+    }
+
     fun load(context: Context, action: PetView.Action): List<Bitmap> {
         val files = folder(context, action).listFiles()
             ?.filter { it.isFile && it.name.matches(Regex("frame_[0-9]{3}\\.png")) }
