@@ -2,6 +2,7 @@ package com.example.catcompanion
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -28,7 +29,10 @@ import java.io.FileOutputStream
 import kotlin.math.max
 
 class MainActivity : Activity() {
-    companion object { private const val REQUEST_IMAGE = 1002 }
+    companion object {
+        private const val REQUEST_IMAGE = 1002
+        private const val REQUEST_VIDEO = 1003
+    }
 
     private val background = Color.rgb(255, 248, 241)
     private val ink = Color.rgb(64, 51, 47)
@@ -36,6 +40,9 @@ class MainActivity : Activity() {
     private var pendingStart = false
     private var importWithAi = true
     private var photoBusy = false
+    private var motionBusy = false
+    private var pendingVideoAction: PetView.Action? = null
+    private lateinit var motionStatus: TextView
     private lateinit var photoStatus: TextView
     private lateinit var permissionSummary: TextView
     private lateinit var runningSummary: TextView
@@ -241,6 +248,24 @@ val scroll = ScrollView(this).apply {
         body.addFull(runningSummary)
         body.addSpace(22)
 
+        body.addFull(label("真正会动的猫咪 · 逐帧动作", 19f, true))
+        body.addSpace(7)
+        body.addFull(label("V0.4 可导入手机里的真实猫咪动作视频，或者用 AI 将一张猫咪照片生成动作视频后再导入。程序逐帧抠图，回放真实的四肢姿态变化。", 13f))
+        body.addSpace(7)
+        body.addFull(button("导入一段动作视频（MP4 等）") { showMotionPicker() })
+        body.addSpace(6)
+        body.addFull(button("打开 AI 图生视频平台（可灵）", filled = false) {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://kling.ai/")))
+        })
+        body.addSpace(6)
+        body.addFull(button("删除已导入的动作", filled = false) { showMotionRemover() })
+        body.addSpace(8)
+        motionStatus = label(MotionFrames.summary(this), 12f)
+        body.addFull(motionStatus)
+        body.addSpace(8)
+        body.addFull(label("注意：单张照片不会在手机本地直接生成新姿态。AI 平台是第三方服务，可能需要账号、收费或上传照片。视频导入后在手机本地逐帧处理并循环播放。", 12f))
+        body.addSpace(20)
+
         body.addFull(label("猫咪动作 · 手动测试", 18f, true))
         body.addSpace(8)
         for ((name, action) in listOf(
@@ -252,7 +277,7 @@ val scroll = ScrollView(this).apply {
             body.addSpace(5)
         }
         body.addSpace(8)
-        body.addFull(label("V0.3：AI 主体识别、透明裁边、活动频率和安静模式。六种动作仍为二维模拟，并非 AI 生成真实四肢动画。", 13f))
+        body.addFull(label("V0.4：优先播放已导入的真实逐帧动作；未导入的动作仍退回二维照片模拟。", 13f))
         body.addSpace(8)
         body.addFull(label("隐私：照片仅保存在手机 APP 的私有目录。模型首次可能通过 Google Play 服务下载；照片保存在手机本地。", 12f))
         refreshPhotoPreview()
@@ -351,9 +376,12 @@ val scroll = ScrollView(this).apply {
     @Deprecated("Use ActivityResult API when AndroidX is added")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != REQUEST_IMAGE || resultCode != RESULT_OK) return
+        if (resultCode != RESULT_OK) return
         val uri = data?.data ?: return
-        if (importWithAi) importAiPhoto(uri) else importOriginalPhoto(uri)
+        when (requestCode) {
+            REQUEST_IMAGE -> if (importWithAi) importAiPhoto(uri) else importOriginalPhoto(uri)
+            REQUEST_VIDEO -> pendingVideoAction?.let { importActionVideo(uri, it) }
+        }
     }
 
     private fun importOriginalPhoto(uri: Uri) {
@@ -422,6 +450,84 @@ val scroll = ScrollView(this).apply {
                     if (!isFinishing && !isDestroyed) {
                         photoStatus.text = "读取图片失败：" + (error.localizedMessage ?: "未知原因")
                     }
+                }
+            }
+        }.start()
+    }
+
+    private fun showMotionPicker() {
+        if (motionBusy) {
+            Toast.makeText(this, "上一段动作视频仍在处理中", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val actions = listOf(
+            PetView.Action.WALK, PetView.Action.SIT, PetView.Action.SLEEP,
+            PetView.Action.STRETCH, PetView.Action.WAVE, PetView.Action.JUMP
+        )
+        val labels = arrayOf("散步", "坐下", "睡觉", "伸懒腰", "挥爪", "跳跃")
+        AlertDialog.Builder(this).setTitle("这段视频对应哪个动作？")
+            .setItems(labels) { _, index ->
+                pendingVideoAction = actions[index]
+                startActivityForResult(
+                    Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        type = "video/*"
+                    }, REQUEST_VIDEO
+                )
+            }.show()
+    }
+
+    private fun showMotionRemover() {
+        val actions = listOf(
+            PetView.Action.WALK, PetView.Action.SIT, PetView.Action.SLEEP,
+            PetView.Action.STRETCH, PetView.Action.WAVE, PetView.Action.JUMP
+        )
+        val names = arrayOf("散步", "坐下", "睡觉", "伸懒腰", "挥爪", "跳跃")
+        AlertDialog.Builder(this).setTitle("删除哪组动作帧？")
+            .setItems(names) { _, index ->
+                MotionFrames.clear(this, actions[index])
+                reloadMotion()
+                motionStatus.text = MotionFrames.summary(this)
+                Toast.makeText(this, "已删除：${names[index]}", Toast.LENGTH_SHORT).show()
+            }.show()
+    }
+
+    private fun reloadMotion() {
+        if (!PetSettings.isRunning(this)) return
+        try {
+            startService(Intent(this, FloatingPetService::class.java)
+                .setAction(FloatingPetService.ACTION_RELOAD_MOTION))
+        } catch (_: Exception) { }
+    }
+
+    private fun importActionVideo(uri: Uri, action: PetView.Action) {
+        if (motionBusy) return
+        motionBusy = true
+        motionStatus.text = "正在准备动作视频…"
+        Thread {
+            try {
+                val frames = MotionFrames.importVideo(this, uri, action) { current, total ->
+                    runOnUiThread {
+                        if (!isFinishing && !isDestroyed) {
+                            motionStatus.text = "动作逐帧抠图：${current}/${total} 帧"
+                        }
+                    }
+                }
+                runOnUiThread {
+                    motionBusy = false
+                    if (!isFinishing && !isDestroyed) {
+                        reloadMotion()
+                        motionStatus.text = "导入成功：${action.name}（${frames} 帧）。" +
+                            MotionFrames.summary(this)
+                        playAction(action)
+                    }
+                }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    motionBusy = false
+                    if (!isFinishing && !isDestroyed)
+                        motionStatus.text = "动作导入失败：" + (error.localizedMessage ?: "未知原因") +
+                            "。可检查视频格式、Google Play 服务模型或网络连接。"
                 }
             }
         }.start()
