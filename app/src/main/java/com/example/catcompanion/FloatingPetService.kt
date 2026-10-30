@@ -47,6 +47,7 @@ class FloatingPetService : Service() {
     private var shown = false
     private var direction = 1
     private var nextActionAt = 0L
+    private var manualActionUntil = 0L
     private var lastVisibilityCheck = 0L
     private var stepIndex = 0
 
@@ -87,6 +88,7 @@ class FloatingPetService : Service() {
                 catView?.setBehavior(behavior)
                 catView?.isWalking = behavior == PetView.Action.WALK
                 nextActionAt = SystemClock.uptimeMillis() + 5000L
+                manualActionUntil = nextActionAt
             } else if (intent?.action == ACTION_RESET_POSITION) {
                 resetPosition()
             } else {
@@ -263,7 +265,8 @@ class FloatingPetService : Service() {
                 val now = SystemClock.uptimeMillis()
                 val auto = PetSettings.autoMotion(this@FloatingPetService)
                 val level = PetSettings.activity(this@FloatingPetService)
-                if (!auto && pet.isWalking && !pet.isExcited()) {
+                val manualActionActive = now < manualActionUntil
+                if (!auto && !manualActionActive && pet.isWalking && !pet.isExcited()) {
                     pet.isWalking = false
                     pet.setBehavior(PetView.Action.IDLE)
                 }
@@ -282,7 +285,7 @@ class FloatingPetService : Service() {
                     val multiplier = (6 - level).toLong()
                     nextActionAt = now + Random.nextLong(1000L + multiplier * 400, 3000L + multiplier * 950)
                 }
-                if (auto && pet.isWalking && !pet.isExcited()) {
+                if ((auto || manualActionActive) && pet.isWalking && !pet.isExcited()) {
                     stepIndex++
                     if (stepIndex % (10 - level * 2) == 0) {
                         val available = max(0, viewport().first - layout.width)
