@@ -29,6 +29,7 @@ class FloatingPetService : Service() {
         const val ACTION_START = "com.example.catcompanion.START"
         const val ACTION_REFRESH = "com.example.catcompanion.REFRESH"
         const val ACTION_PLAY = "com.example.catcompanion.PLAY"
+        const val ACTION_RESET_POSITION = "com.example.catcompanion.RESET_POSITION"
         const val EXTRA_BEHAVIOR = "behavior"
         const val ACTION_STOP = "com.example.catcompanion.STOP"
         private const val CHANNEL = "cat_companion_running"
@@ -46,6 +47,7 @@ class FloatingPetService : Service() {
     private var shown = false
     private var direction = 1
     private var nextActionAt = 0L
+    private var manualActionUntil = 0L
     private var lastVisibilityCheck = 0L
     private var stepIndex = 0
 
@@ -86,9 +88,16 @@ class FloatingPetService : Service() {
                 catView?.setBehavior(behavior)
                 catView?.isWalking = behavior == PetView.Action.WALK
                 nextActionAt = SystemClock.uptimeMillis() + 5000L
+                manualActionUntil = nextActionAt
+            } else if (intent?.action == ACTION_RESET_POSITION) {
+                resetPosition()
             } else {
                 resizePet()
                 catView?.loadPhoto()
+                if (!PetSettings.autoMotion(this)) {
+                    catView?.isWalking = false
+                    catView?.setBehavior(PetView.Action.IDLE)
+                }
                 updateVisibility(force = true)
                 getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
             }
@@ -144,8 +153,11 @@ class FloatingPetService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = max(0, (screen.first - side) / 2)
-            y = max(0, screen.second - side - dp(80))
+            val existing = PetSettings.savedPosition(this@FloatingPetService)
+            x = existing?.let { (it.first * max(0, screen.first - side)).toInt() }
+                ?: max(0, (screen.first - side) / 2)
+            y = existing?.let { (it.second * max(0, screen.second - side)).toInt() }
+                ?: max(0, screen.second - side - dp(80))
         }
         val pet = PetView(this)
         installDragAndTap(pet, layout)
@@ -194,6 +206,12 @@ class FloatingPetService : Service() {
                 }
                 MotionEvent.ACTION_UP -> {
                     if (!dragging) view.performClick()
+                    else {
+                        val (w, h) = viewport()
+                        PetSettings.setPosition(this,
+                            layout.x.toFloat() / max(1, w - layout.width),
+                            layout.y.toFloat() / max(1, h - layout.height))
+                    }
                     true
                 }
                 MotionEvent.ACTION_CANCEL -> true
@@ -201,6 +219,16 @@ class FloatingPetService : Service() {
             }
         }
         pet.setOnClickListener { pet.poke() }
+    }
+
+    private fun resetPosition() {
+        PetSettings.clearPosition(this)
+        val layout = params ?: return
+        val pet = catView ?: return
+        val (w, h) = viewport()
+        layout.x = max(0, (w - layout.width) / 2)
+        layout.y = max(0, h - layout.height - dp(80))
+        if (attached) windows.updateViewLayout(pet, layout)
     }
 
     private fun resizePet() {
@@ -235,7 +263,14 @@ class FloatingPetService : Service() {
             updateVisibility()
             if (shown && pet != null && layout != null) {
                 val now = SystemClock.uptimeMillis()
-                if (now >= nextActionAt && !pet.isExcited()) {
+                val auto = PetSettings.autoMotion(this@FloatingPetService)
+                val level = PetSettings.activity(this@FloatingPetService)
+                val manualActionActive = now < manualActionUntil
+                if (!auto && !manualActionActive && pet.isWalking && !pet.isExcited()) {
+                    pet.isWalking = false
+                    pet.setBehavior(PetView.Action.IDLE)
+                }
+                if (auto && now >= nextActionAt && !pet.isExcited()) {
                     val behavior = when (Random.nextInt(12)) {
                         0, 1 -> PetView.Action.SIT
                         2 -> PetView.Action.SLEEP
@@ -247,11 +282,12 @@ class FloatingPetService : Service() {
                     }
                     pet.setBehavior(behavior)
                     pet.isWalking = behavior == PetView.Action.WALK
-                    nextActionAt = now + Random.nextLong(2500L, 6500L)
+                    val multiplier = (6 - level).toLong()
+                    nextActionAt = now + Random.nextLong(1000L + multiplier * 400, 3000L + multiplier * 950)
                 }
-                if (pet.isWalking && !pet.isExcited()) {
+                if ((auto || manualActionActive) && pet.isWalking && !pet.isExcited()) {
                     stepIndex++
-                    if (stepIndex % 2 == 0) {
+                    if (stepIndex % (10 - level * 2) == 0) {
                         val available = max(0, viewport().first - layout.width)
                         layout.x = (layout.x + direction * dp(1)).coerceIn(0, available)
                         if (layout.x >= available || layout.x <= 0) direction *= -1
@@ -261,7 +297,10 @@ class FloatingPetService : Service() {
                 }
                 pet.invalidate()
             }
-            handler.postDelayed(this, if (shown) 55L else 500L)
+            handler.postDelayed(this,
+                if (!shown) 500L
+                else if (PetSettings.autoMotion(this@FloatingPetService)) 55L
+                else 150L)
         }
     }
 

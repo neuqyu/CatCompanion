@@ -22,6 +22,7 @@ internal class PetView(context: Context) : View(context) {
     private var actionSince = SystemClock.uptimeMillis()
     private var excitedUntil = 0L
     private var imported: Bitmap? = null
+    private var loadedPhotoSignature = Long.MIN_VALUE
     var facingRight: Boolean = true
     var isWalking = true
     private val ink = Color.rgb(83, 57, 51)
@@ -31,15 +32,21 @@ internal class PetView(context: Context) : View(context) {
     init { loadPhoto() }
 
     fun loadPhoto() {
-        imported?.recycle()
-        imported = null
         val file = PetSettings.petImage(context)
-        if (file.exists()) {
+        val signature = if (file.isFile) file.lastModified() xor file.length() else -1L
+        if (signature == loadedPhotoSignature) return
+        val next = if (file.isFile) {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeFile(file.path, bounds)
-            val sample = generateSequence(1) { it * 2 }.first { bounds.outWidth / it <= 640 && bounds.outHeight / it <= 640 }
-            imported = BitmapFactory.decodeFile(file.path, BitmapFactory.Options().apply { inSampleSize = sample })
-        }
+            if (bounds.outWidth > 0 && bounds.outHeight > 0) {
+                var sample = 1
+                while (kotlin.math.max(bounds.outWidth, bounds.outHeight) / sample > 640) sample *= 2
+                BitmapFactory.decodeFile(file.path, BitmapFactory.Options().apply { inSampleSize = sample })
+            } else null
+        } else null
+        imported?.recycle()
+        imported = next
+        loadedPhotoSignature = signature
         invalidate()
     }
 
